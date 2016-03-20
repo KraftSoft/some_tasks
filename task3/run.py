@@ -18,7 +18,7 @@ if __name__ == '__main__':
         pass
 
     store = FileSystemStore()
-    fs_manager = FileSystemManager(store.get_cursor(), sys.stdout)
+    fs_manager = FileSystemManager(store, sys.stdout)
     session = fs_manager.get_session()
 
     while True:

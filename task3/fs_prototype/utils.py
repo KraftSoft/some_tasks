@@ -6,6 +6,7 @@ import os
 import warnings
 from datetime import datetime
 
+
 class FileSystemStore(object):
     def __init__(self):
         self.conn = pymysql.connect(host='127.0.0.1', user='kic', passwd='0', db='fs_prototype', charset='utf8')
@@ -33,6 +34,9 @@ class FileSystemManager(object):
             'read-write': 6,
             'all': 7
         }
+
+        self.default_permissions = '755'
+
         self.ACTION_EXECUTE = 'execute'
         self.ACTION_READ = 'read'
         self.ACTION_WRITE = 'write'
@@ -69,11 +73,16 @@ class FileSystemManager(object):
     def command_executor(self, command, args):
         command_dict = {
             'cd': self.change_dir,
+            'mkdir': self.make_dir,
+            'mkfile': self.make_file
         }
 
         if command in command_dict:
             try:
-                return command_dict[command](*args)
+                if args:
+                    return command_dict[command](*args)
+                else:
+                    return command_dict[command]()
             except Exception as e:
                 self.write_out(e)
         else:
@@ -218,7 +227,16 @@ class FileSystemManager(object):
         if row:
             return row
 
-    def __create_directory(self, dir_name, parent_id, permissions=['7', '5', '5']):
+    def __create(self, node_type, name, parent_id, permissions):
+
+        perms = permissions if permissions and self.__check__permissions_symbols(permissions) else self.default_permissions
+
+        if node_type == self.node_types['file']:
+            return self.__create_file(name, parent_id, perms)
+        elif node_type == self.node_types['directory']:
+            return self.__create_directory(name, parent_id, perms)
+
+    def __create_directory(self, dir_name, parent_id, permissions):
         user = self.__session.user
         dir_path = '{0}/{1}'.format(self.__session.current_directory.path, dir_name)
         meta_id = self.__execute_single("INSERT INTO meta (date_create, last_modify, owner_id, last_changer_id, path) "
@@ -228,11 +246,50 @@ class FileSystemManager(object):
         node_id = self.__execute_single("INSERT INTO node (name, type, meta_id, parent_id) "
                                         "VALUES (%s, %s, %s, %s)", (dir_name, node_type, meta_id, parent_id))
 
+        permission_name = '{0} directory permissions'.format(dir_path)
 
+        owner_p = permissions[0]
+        group_p = permissions[1]
+        others_p = permissions[2]
 
-        self.__execute_single("INSERT INTO node (name, type, meta_id)")
+        permission_id = self.__execute_single("INSERT INTO permissions (name, owner_permission, group_permission, others_permission, node_id) "
+                          "VALUES (%s, %s, %s, %s, %s)", (permission_name, owner_p, group_p, others_p, node_id))
+        if permission_id:
+            return True
 
-    def change_dir(self, dir_name):
+    def __create_file(self, file_name, parent_id, permissions):
+        user = self.__session.user
+        file_path = '{0}/{1}'.format(self.__session.current_directory.path, file_name)
+        meta_id = self.__execute_single("INSERT INTO meta (date_create, last_modify, owner_id, last_changer_id, path) "
+                              "VALUES (%s, %s, %s, %s, %s)", (datetime.now(), datetime.now(), user.id, user.id, file_path))
+
+        node_type = self.node_types['file']
+        node_id = self.__execute_single("INSERT INTO node (name, type, meta_id, parent_id) "
+                                        "VALUES (%s, %s, %s, %s)", (file_name, node_type, meta_id, parent_id))
+
+        permission_name = '{0} file permissions'.format(file_path)
+
+        owner_p = permissions[0]
+        group_p = permissions[1]
+        others_p = permissions[2]
+
+        permission_id = self.__execute_single("INSERT INTO permissions (name, owner_permission, group_permission, others_permission, node_id) "
+                          "VALUES (%s, %s, %s, %s, %s)", (permission_name, owner_p, group_p, others_p, node_id))
+        if permission_id:
+            return True
+
+    def __check__permissions_symbols(self, perm):
+        if isinstance(perm, str) and len(perm) == 3:
+            perm_available_symbols = {'1', '2', '3', '4', '5', '6', '7'}
+            perm_list = list(perm)
+            perm_set = set(perm_list)
+            return perm_set.issubset(perm_available_symbols)
+
+    def change_dir(self, dir_name=None):
+        if not dir_name:
+            self.write_out('Directory name is required')
+            return
+
         if len(dir_name) > 0:
 
             if dir_name[0] == self.root_directory:
@@ -254,27 +311,42 @@ class FileSystemManager(object):
         else:
             self.write_out('Directory name is required')
 
-    def make_dir(self, dir_name):
+    def make_dir(self, dir_name=None, perm=None):
+        if not dir_name:
+            self.write_out('Directory name is required')
+            return
         if len(dir_name) > 0:
 
             current_node = self.__session.current_directory.node_id
+
+            permissions = perm if perm and self.__check__permissions_symbols(perm) else self.default_permissions
+
             if self.__has_access(self.__session.user, current_node, self.ACTION_WRITE):
-
-
-            node_id = self.__get_node_by_name(dir_name, current_node, self.node_types['directory'])
-
-            if not node_id:
-                self.write_out('Directory not found')
-                return self.get_session()
+                is_created = self.__create(self.node_types['directory'], dir_name, current_node, list(permissions))
+                if not is_created:
+                    self.write_out('Can not create a directory')
             else:
-                if self.__has_access(self.__session.user, node_id, self.ACTION_EXECUTE):
-                    new_dir = Directory(*self.__get_directory_meta(node_id))
-                    self.__session.change_dir(new_dir)
-                    return self.get_session()
-                else:
-                    self.write_out('Access denaid')
+                self.write_out('Access denaid')
         else:
             self.write_out('Directory name is required')
+
+    def make_file(self, file_name=None, perm=None):
+        if not file_name:
+            self.write_out('File name is required')
+            return
+        if len(file_name) > 0:
+
+            current_node = self.__session.current_directory.node_id
+
+            if self.__has_access(self.__session.user, current_node, self.ACTION_WRITE):
+                is_created = self.__create(self.node_types['directory'], file_name, current_node, perm)
+                if not is_created:
+                    self.write_out('Can not create a file')
+            else:
+                self.write_out('Access denaid')
+        else:
+            self.write_out('File name is required')
+
 
 class FileSystemUser(object):
     def __init__(self, user_id, login, group_id, is_superuser):
