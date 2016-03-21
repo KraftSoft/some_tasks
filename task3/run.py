@@ -1,4 +1,4 @@
-from task3.fs_prototype.utils import FileSystemStore, FileSystemManager
+from fs_prototype.utils import FileSystemStore, FileSystemManager
 import sys
 
 
@@ -12,10 +12,6 @@ def data_parse(line):
 
 
 if __name__ == '__main__':
-    try:
-        input = raw_input
-    except NameError:
-        pass
 
     store = FileSystemStore()
     fs_manager = FileSystemManager(store, sys.stdout)

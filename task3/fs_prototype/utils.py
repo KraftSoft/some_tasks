@@ -7,11 +7,16 @@ import sys
 import os
 import warnings
 from datetime import datetime
+import configparser
 
 
 class FileSystemStore(object):
     def __init__(self):
-        self.conn = pymysql.connect(host='127.0.0.1', user='kic', passwd='0', db='fs_prototype', charset='utf8')
+        conf = configparser.ConfigParser()
+        conf.read('conf/default.conf')
+        database = conf['DATABASE']
+        self.conn = pymysql.connect(host=database['host'], user=database['user'], passwd=database['password'],
+                                    db=database['database'], charset='utf8')
 
     def get_cursor(self):
         return self.conn.cursor()
@@ -309,7 +314,7 @@ class FileSystemManager(object):
 
     def __check__permissions_symbols(self, perm):
         if isinstance(perm, str) and len(perm) == 3:
-            perm_available_symbols = {'1', '2', '3', '4', '5', '6', '7'}
+            perm_available_symbols = set(('1', '2', '3', '4', '5', '6', '7'))
             perm_set = set(list(perm))
             return perm_set.issubset(perm_available_symbols)
 
