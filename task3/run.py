@@ -32,5 +32,6 @@ if __name__ == '__main__':
             fs_manager.command_executor(command, args)
 
         except EOFError:
+            fs_manager.cursor.close()
             print('Bye!')
             exit(0)

@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import pymysql
 from getpass import fallback_getpass
 import hashlib
@@ -58,6 +60,16 @@ class FileSystemManager(object):
             'directory': 1
         }
 
+        self.node_types_map = {
+            0: 'f',
+            1: 'd'
+        }
+
+        self.colors = {
+            'blue': '\033[94m',
+            'default': '\033[0m'
+        }
+
         self.TYPE_OWNER = 'owner'
         self.TYPE_GROUP = 'group'
         self.TYPE_OTHERS = 'others'
@@ -74,7 +86,8 @@ class FileSystemManager(object):
         command_dict = {
             'cd': self.change_dir,
             'mkdir': self.make_dir,
-            'mkfile': self.make_file
+            'mkfile': self.make_file,
+            'ls': self.list_directory
         }
 
         if command in command_dict:
@@ -88,13 +101,15 @@ class FileSystemManager(object):
         else:
             self.write_out("Command '{0}' not found".format(command))
 
-    def write_out(self, string):
-        return self.stream.write('{0}{1}'.format(string, '\n'))
+    def write_out(self, string, color=None):
+        if color:
+            return self.stream.write(color + '{0}{1}'.format(string, '\n') + self.colors['default'])
+        else:
+            return self.stream.write('{0}{1}'.format(string, '\n'))
 
     def __fetch_multi(self, request, params):
         results_count = self.cursor.execute(request, params)
         results_values = self.cursor.fetchall()
-        self.cursor.close()
         return results_count, results_values
 
     def __fetch_single(self, request, params):
@@ -108,8 +123,9 @@ class FileSystemManager(object):
         return self.cursor.lastrowid
 
     def __login(self, username, password):
-        value = self.__fetch_single("SELECT id, login, group_id, is_superuser FROM user WHERE login=%s AND password=%s ",
-                                    (username, password))
+        value = self.__fetch_single(
+            "SELECT id, login, group_id, is_superuser FROM user WHERE login=%s AND password=%s ",
+            (username, password))
         if value:
             return True, FileSystemUser(*value)
         else:
@@ -151,8 +167,8 @@ class FileSystemManager(object):
 
         db_column = self.user_types_columns[user_type]
         row = self.__fetch_single("SELECT {0}, N.type "
-                                    "FROM permissions P INNER JOIN node N ON N.id=P.node_id "
-                                    "WHERE node_id=%s ".format(db_column), (node_id, ), )
+                                  "FROM permissions P INNER JOIN node N ON N.id=P.node_id "
+                                  "WHERE node_id=%s ".format(db_column), (node_id,), )
         if row:
             permission = int(row[0])
             node_type = row[1]
@@ -177,16 +193,16 @@ class FileSystemManager(object):
 
     def __get_owner_id(self, node_id):
         row = self.__fetch_single("SELECT M.owner_id "
-                                    "FROM node N INNER JOIN meta M ON N.meta_id=M.id "
-                                    "WHERE N.id=%s", (node_id,))
+                                  "FROM node N INNER JOIN meta M ON N.meta_id=M.id "
+                                  "WHERE N.id=%s", (node_id,))
         if row:
             return int(row[0])
 
     def __get_owner_group_id(self, node_id):
         row = self.__fetch_single("SELECT U.group_id "
-                                    "FROM node N INNER JOIN meta M ON N.meta_id=M.id "
-                                    "INNER JOIN user U ON U.id=M.owner_id "
-                                    "WHERE N.id=%s", (node_id,))
+                                  "FROM node N INNER JOIN meta M ON N.meta_id=M.id "
+                                  "INNER JOIN user U ON U.id=M.owner_id "
+                                  "WHERE N.id=%s", (node_id,))
         if row:
             if row[0]:
                 return int(row[0])
@@ -198,14 +214,14 @@ class FileSystemManager(object):
             if self.__has_access(user, node_id, self.ACTION_EXECUTE):
                 return Directory(*self.__get_directory_meta(node_id))
             else:
-                self.write_out('Access denaid')
+                self.write_out('Access denied')
         else:
             self.write_out('Directory not found')
 
     def __get_node_by_name(self, dir_name, parent_id, node_type):
         row = self.__fetch_single("SELECT N.id "
-                                    "FROM meta M INNER JOIN node N ON N.meta_id=M.id "
-                                    "WHERE N.name=%s AND N.parent_id=%s AND N.type=%s ",
+                                  "FROM meta M INNER JOIN node N ON N.meta_id=M.id "
+                                  "WHERE N.name=%s AND N.parent_id=%s AND N.type=%s ",
                                   (dir_name, parent_id, node_type))
 
         if row:
@@ -213,23 +229,24 @@ class FileSystemManager(object):
 
     def __get_node_by_path(self, path, node_type):
         row = self.__fetch_single("SELECT N.id "
-                                    "FROM meta M INNER JOIN node N ON N.meta_id=M.id "
-                                    "WHERE M.path=%s and N.type=%s", (path, node_type))
+                                  "FROM meta M INNER JOIN node N ON N.meta_id=M.id "
+                                  "WHERE M.path=%s and N.type=%s", (path, node_type))
 
         if row:
             return int(row[0])
 
     def __get_directory_meta(self, dir_id):
         row = self.__fetch_single("SELECT N.id, N.name, M.path "
-                                    "FROM meta M INNER JOIN node N ON N.meta_id=M.id "
-                                    "WHERE N.id=%s AND N.type=%s ", (dir_id, self.node_types['directory']))
+                                  "FROM meta M INNER JOIN node N ON N.meta_id=M.id "
+                                  "WHERE N.id=%s AND N.type=%s ", (dir_id, self.node_types['directory']))
 
         if row:
             return row
 
     def __create(self, node_type, name, parent_id, permissions):
 
-        perms = permissions if permissions and self.__check__permissions_symbols(permissions) else self.default_permissions
+        perms = permissions if permissions and self.__check__permissions_symbols(
+            permissions) else self.default_permissions
 
         if node_type == self.node_types['file']:
             return self.__create_file(name, parent_id, perms)
@@ -238,9 +255,14 @@ class FileSystemManager(object):
 
     def __create_directory(self, dir_name, parent_id, permissions):
         user = self.__session.user
-        dir_path = '{0}/{1}'.format(self.__session.current_directory.path, dir_name)
+        if self.__session.current_directory.path != self.root_directory:
+            dir_path = '{0}/{1}'.format(self.__session.current_directory.path, dir_name)
+        else:
+            dir_path = '{0}{1}'.format(self.__session.current_directory.path, dir_name)
+
         meta_id = self.__execute_single("INSERT INTO meta (date_create, last_modify, owner_id, last_changer_id, path) "
-                              "VALUES (%s, %s, %s, %s, %s)", (datetime.now(), datetime.now(), user.id, user.id, dir_path))
+                                        "VALUES (%s, %s, %s, %s, %s)",
+                                        (datetime.now(), datetime.now(), user.id, user.id, dir_path))
 
         node_type = self.node_types['directory']
         node_id = self.__execute_single("INSERT INTO node (name, type, meta_id, parent_id) "
@@ -252,16 +274,22 @@ class FileSystemManager(object):
         group_p = permissions[1]
         others_p = permissions[2]
 
-        permission_id = self.__execute_single("INSERT INTO permissions (name, owner_permission, group_permission, others_permission, node_id) "
-                          "VALUES (%s, %s, %s, %s, %s)", (permission_name, owner_p, group_p, others_p, node_id))
+        permission_id = self.__execute_single(
+            "INSERT INTO permissions (name, owner_permission, group_permission, others_permission, node_id) "
+            "VALUES (%s, %s, %s, %s, %s)", (permission_name, owner_p, group_p, others_p, node_id))
         if permission_id:
             return True
 
     def __create_file(self, file_name, parent_id, permissions):
         user = self.__session.user
-        file_path = '{0}/{1}'.format(self.__session.current_directory.path, file_name)
+        if self.__session.current_directory.path != self.root_directory:
+            file_path = '{0}/{1}'.format(self.__session.current_directory.path, file_name)
+        else:
+            file_path = '{0}{1}'.format(self.__session.current_directory.path, file_name)
+
         meta_id = self.__execute_single("INSERT INTO meta (date_create, last_modify, owner_id, last_changer_id, path) "
-                              "VALUES (%s, %s, %s, %s, %s)", (datetime.now(), datetime.now(), user.id, user.id, file_path))
+                                        "VALUES (%s, %s, %s, %s, %s)",
+                                        (datetime.now(), datetime.now(), user.id, user.id, file_path))
 
         node_type = self.node_types['file']
         node_id = self.__execute_single("INSERT INTO node (name, type, meta_id, parent_id) "
@@ -273,17 +301,56 @@ class FileSystemManager(object):
         group_p = permissions[1]
         others_p = permissions[2]
 
-        permission_id = self.__execute_single("INSERT INTO permissions (name, owner_permission, group_permission, others_permission, node_id) "
-                          "VALUES (%s, %s, %s, %s, %s)", (permission_name, owner_p, group_p, others_p, node_id))
+        permission_id = self.__execute_single(
+            "INSERT INTO permissions (name, owner_permission, group_permission, others_permission, node_id) "
+            "VALUES (%s, %s, %s, %s, %s)", (permission_name, owner_p, group_p, others_p, node_id))
         if permission_id:
             return True
 
     def __check__permissions_symbols(self, perm):
         if isinstance(perm, str) and len(perm) == 3:
             perm_available_symbols = {'1', '2', '3', '4', '5', '6', '7'}
-            perm_list = list(perm)
-            perm_set = set(perm_list)
+            perm_set = set(list(perm))
             return perm_set.issubset(perm_available_symbols)
+
+    def __get_directory_list(self, directory_id):
+        results = []
+        _, rows = self.__fetch_multi("SELECT name, type FROM node WHERE parent_id=%s", (directory_id,))
+        for row in rows:
+            results.append({'name': row[0], 'type': row[1]})
+        return results
+
+    def __get_extended_directory_list(self, directory_id):
+        header = OrderedDict((
+            ('name', 'file name'),
+            ('type', 'type'),
+            ('permissions', 'perm'),
+            ('owner', 'owner'),
+            ('changer', 'changer'),
+            ('date_create', 'creation date'),
+            ('last_modify', 'last modify')
+        ))
+
+        results = [header]
+        count, rows = self.__fetch_multi("SELECT N.name, N.type, P.owner_permission, P.group_permission, "
+                                         "P.others_permission, Owner.login, Changer.login, "
+                                         "M.date_create, M.last_modify FROM node N "
+                                         "INNER JOIN meta M ON N.meta_id=M.id "
+                                         "INNER JOIN permissions P ON P.node_id=N.id "
+                                         "INNER JOIN user Owner ON M.owner_id=Owner.id AND N.meta_id=M.id "
+                                         "INNER JOIN user Changer ON M.last_changer_id=Changer.id AND N.meta_id=M.id "
+                                         "WHERE N.parent_id=%s", (directory_id,))
+        for row in rows:
+            results.append(OrderedDict((
+                ('name', row[0]),
+                ('type', row[1]),
+                ('permissions', '{0}{1}{2}'.format(row[2], row[3], row[4])),
+                ('owner', row[5]),
+                ('changer', row[6]),
+                ('date_create', row[7]),
+                ('last_modify', row[8])
+            )))
+        return count, results
 
     def change_dir(self, dir_name=None):
         if not dir_name:
@@ -307,7 +374,7 @@ class FileSystemManager(object):
                     self.__session.change_dir(new_dir)
                     return self.get_session()
                 else:
-                    self.write_out('Access denaid')
+                    self.write_out('Access denied')
         else:
             self.write_out('Directory name is required')
 
@@ -319,14 +386,12 @@ class FileSystemManager(object):
 
             current_node = self.__session.current_directory.node_id
 
-            permissions = perm if perm and self.__check__permissions_symbols(perm) else self.default_permissions
-
             if self.__has_access(self.__session.user, current_node, self.ACTION_WRITE):
-                is_created = self.__create(self.node_types['directory'], dir_name, current_node, list(permissions))
+                is_created = self.__create(self.node_types['directory'], dir_name, current_node, perm)
                 if not is_created:
                     self.write_out('Can not create a directory')
             else:
-                self.write_out('Access denaid')
+                self.write_out('Access denied')
         else:
             self.write_out('Directory name is required')
 
@@ -339,13 +404,53 @@ class FileSystemManager(object):
             current_node = self.__session.current_directory.node_id
 
             if self.__has_access(self.__session.user, current_node, self.ACTION_WRITE):
-                is_created = self.__create(self.node_types['directory'], file_name, current_node, perm)
+                is_created = self.__create(self.node_types['file'], file_name, current_node, perm)
                 if not is_created:
                     self.write_out('Can not create a file')
             else:
-                self.write_out('Access denaid')
+                self.write_out('Access denied')
         else:
             self.write_out('File name is required')
+
+    def __format_dir_list(self, directory):
+
+        name = directory['name']
+        node_type = directory['type']
+        permissions = directory['permissions']
+        owner = directory['owner']
+        changer = directory['changer']
+        date_create = directory['date_create']
+        last_modify = directory['last_modify']
+
+        return '%-6s %-5s %-10s %-10s %-25s %-25s %s' % (
+            permissions, node_type, owner, changer, date_create, last_modify, name)
+
+    def list_directory(self, params=None):
+        current_node_id = self.__session.current_directory.node_id
+        if self.__has_access(self.__session.user, current_node_id, self.ACTION_READ):
+            if not params:
+                directories = self.__get_directory_list(current_node_id)
+                for dir in directories:
+                    if dir['type'] == self.node_types['file']:
+                        self.write_out(dir['name'])
+                    elif dir['type'] == self.node_types['directory']:
+                        self.write_out(dir['name'], self.colors['blue'])
+
+            elif params == '-l':
+                count, directories = self.__get_extended_directory_list(current_node_id)
+                self.write_out('total: {0}'.format(count))
+                header = directories.pop(0)
+                self.write_out(self.__format_dir_list(header))
+                for dir in directories:
+                    line = self.__format_dir_list(dir)
+                    if dir['type'] == self.node_types['file']:
+                        self.write_out(line)
+                    elif dir['type'] == self.node_types['directory']:
+                        self.write_out(line, self.colors['blue'])
+            else:
+                self.write_out("ls command can use with flag '-l' ")
+        else:
+            self.write_out('Access denied')
 
 
 class FileSystemUser(object):
